@@ -1,5 +1,6 @@
 import numpy as np
 from global_params import *
+from math import *
     
 def Solver_Mec(coordinates, mesh_number, lamb, mu, eig, ez0, p_, iter):
     p0=p_
@@ -16,7 +17,7 @@ def Solver_Mec(coordinates, mesh_number, lamb, mu, eig, ez0, p_, iter):
     x3 = coordinates[3]  # Cu3Sn - Cu
     x4 = coordinates[4]  ##external boundary
 
-    mesh_1= np.linspace(0,x1, N1, endpoint=False)
+    mesh_1= np.linspace(x0,x1, N1, endpoint=False)
     mesh_2= np.linspace(x1,x2, N2, endpoint=False)
     mesh_3= np.linspace(x2,x3, N3, endpoint=False)
     mesh_4= np.linspace(x3,x4, N4)
@@ -38,6 +39,10 @@ def Solver_Mec(coordinates, mesh_number, lamb, mu, eig, ez0, p_, iter):
 
     eps_z = ez0
     check = 1.0
+    ## secondary variables
+    bc1 = N1
+    bc2 = N1+N2
+    bc3 = N1+N2+N3
 
     while (check > 1e-5):
         # tridiagonal coefficients
@@ -57,11 +62,7 @@ def Solver_Mec(coordinates, mesh_number, lamb, mu, eig, ez0, p_, iter):
 
         center[0] = 1.0  ## ur(0)=0
 
-        ## secondary variables
-        bc1 = N1
-        bc2 = N1+N2
-        bc3 = N1+N2+N3
-
+        
         left[bc1] = -(lamb1+2*mu1)/(mesh[bc1]-mesh[bc1-1])
         center[bc1] = (lamb2+2*mu2)/(mesh[bc1+1]-mesh[bc1]) + (lamb1+2*mu1)/(mesh[bc1]-mesh[bc1-1]) + (lamb1-lamb2)/mesh[bc1]
         right[bc1] = -(lamb2+2*mu2)/(mesh[bc1+1]-mesh[bc1])
@@ -121,7 +122,7 @@ def Solver_Mec(coordinates, mesh_number, lamb, mu, eig, ez0, p_, iter):
     sg_z = np.zeros(N)
     sg_trace = np.zeros(N) 
 
-    for i in range(0,bc1,1):
+    for i in range(1,bc1,1):
         K1 = lamb1+2*mu1
         K2 = 3*lamb1+2*mu1
         du_rp = (ur[i+1]-ur[i])/(mesh[i+1]-mesh[i])
@@ -163,8 +164,21 @@ def Solver_Mec(coordinates, mesh_number, lamb, mu, eig, ez0, p_, iter):
 
     return mesh, ur, [sg_r, sg_theta, sg_z, sg_trace]
 
-def Solver(dt_, T_, mesh_m_, p_):
-    
+def D12_update(trace, k_coup):
+    Q12= 53.92e3 - k_coup*trace
+    ans = 1.84e-9*exp(-(Q12)/(R_gas*(273+Temperature)))
+    return ans
+def D23_update(trace, k_coup):
+    Q23= 61.86e3 - k_coup*trace
+    ans = 5.48e-9*exp(-(Q23)/(R_gas*(273+Temperature)))
+    return ans
+
+
+def Solver(dt_, T_, mesh_number, p_, k_coup, coordinates, concentration,  D_ ,lamb, mu, eig, ez0, iter):
+
+    sx0,sx1,sx2,sx3,sx4 = coordinates
+    c0,c1m,c1p,c2m,c2p,c3m,c3p,c4 = concentration
+
     p0 = p_
     dt = dt_
     t_num = int(T_/dt)
@@ -172,8 +186,8 @@ def Solver(dt_, T_, mesh_m_, p_):
     x1_new = np.zeros(t_num+1)
     x2_new = np.zeros(t_num+1)
     x3_new = np.zeros(t_num+1)
-    ur_total = np.zeros([t_num+1, mesh_m_*4])
-    mesh_total = np.zeros([t_num+1, mesh_m_*4])
+    ur_total = np.zeros([t_num+1, mesh_number*4])
+    mesh_total = np.zeros([t_num+1, mesh_number*4])
 
     x1_new[0] = sx1
     x2_new[0] = sx2
@@ -184,17 +198,18 @@ def Solver(dt_, T_, mesh_m_, p_):
     x2 = x2_new[0]
     x3 = x3_new[0]
     x4 = sx4
-   
+    
+    D_01s, D_12s, D_23s, D_34s = D_
     D_01 = D_01s
     D_12 = D_12s
     D_23 = D_23s
     D_34 = D_34s
 
     # number of point in each region, exluding endpoint point
-    N1_mech = mesh_m_
-    N2_mech = mesh_m_
-    N3_mech = mesh_m_
-    N4_mech = mesh_m_
+    N1_mech = mesh_number
+    N2_mech = mesh_number
+    N3_mech = mesh_number
+    N4_mech = mesh_number
     N_mech = N1_mech +N2_mech + N3_mech + N4_mech
 
     mesh_1= np.linspace(0,sx1, N1_mech, endpoint=False)
@@ -207,19 +222,43 @@ def Solver(dt_, T_, mesh_m_, p_):
     #### INITIAL PRE-CYCLE STEP
     #### SOLVE MECHANICAL PART
     #### OUTPUT: MESH< RADIAL DISP, [SG_R, SG_THETA, SG_Z, TRACE]
-    mesh_total[0,:], ur_total[0,:], sg = Solve_Mec([sx0,sx1,sx2,sx3,x4], mesh_m_, 0.0, p0 )
+    mesh_total[0,:], ur_total[0,:], sg = Solver_Mec(coordinates, mesh_number, lamb, mu, eig, 0.0, p_, iter)
 
     #### UPDATE DIFFUSION COEFFICIENTS
-    D_12 = D12_update(sg[3][N1_mech: N1_mech+N2_mech].mean())
-    D_23 = D23_update(sg[3][N1_mech+N2_mech: N1_mech+N2_mech+N3_mech].mean())
+    D_12 = D12_update(sg[3][N1_mech: N1_mech+N2_mech].mean(), k_coup)
+    D_23 = D23_update(sg[3][N1_mech+N2_mech: N1_mech+N2_mech+N3_mech].mean(), k_coup)
 
-    print(sg[3][N1_mech: N1_mech+N2_mech].mean())
-    print(sg[3][N1_mech+N2_mech: N1_mech+N2_mech+N3_mech].mean())
+    #print(sg[3][N1_mech: N1_mech+N2_mech].mean())
+    #print(sg[3][N1_mech+N2_mech: N1_mech+N2_mech+N3_mech].mean())
 
     for t_i in range(t_num):
-        x1_new[t_i+1] =  x1_new[t_i] + dt/(c1p-c1m)*(-D_12*(c2m-c1p))/(x2-x1)
-        x2_new[t_i+1] =  x2_new[t_i] + dt/(c2p-c2m)*(D_12*(c2m-c1p)/(x2-x1) - D_23*(c3m-c2p)/(x3-x2) )
-        x3_new[t_i+1] =  x3_new[t_i] + dt/(c3p-c3m)*( D_23*(c3m-c2p)/(x3-x2) )
+
+        from scipy import special
+
+        #t0 = 60*60
+        #x1 = np.linspace(sx1, sx2, 100)
+        #B12 = (c2m-c1p)/(special.erf(x1_new[t_i]/(2*sqrt(D_12s*t0))) - special.erf(x2_new[t_i]/(2*sqrt(D_12s*t0))) )
+        #A12 = c1p + B12*special.erf(x1_new[t_i]/(2*sqrt(D_12s*t0)))
+        #y1 = A12 - B12*special.erf(x1/(2*sqrt(D_12s*t0)))
+        #J1 = -B12*np.exp(-x1_new[t_i]**2/(4*D_12s*t0))/(2*sqrt(D_12s*t0))
+        #J2 = -B12*np.exp(-x2_new[t_i]**2/(4*D_12s*t0))/(2*sqrt(D_12s*t0))
+
+
+        #x2 = np.linspace(sx2, sx3, 100)
+        #B23 = (c3m-c2p)/(special.erf(x2_new[t_i]/(2*sqrt(D_23s*t0))) - special.erf(x3_new[t_i]/(2*sqrt(D_23s*t0))) )
+        #A23 = c2p + B23*special.erf(x2_new[t_i]/(2*sqrt(D_23s*t0)))
+        #y2 = A23 - B23*special.erf(x2/(2*sqrt(D_23s*t0)))
+
+        #J3 = -B23*np.exp(-x2_new[t_i]**2/(4*D_23s*t0))/(2*sqrt(D_23s*t0))
+        #J4 = -B23*np.exp(-x3_new[t_i]**2/(4*D_23s*t0))/(2*sqrt(D_23s*t0))
+
+        #x1_new[t_i+1] =  x1_new[t_i] + dt/(c1p-c1m)*(D_12*J1)/(x2-x1)
+        #x2_new[t_i+1] =  x2_new[t_i] + dt/(c2p-c2m)*(D_12*J2 - D_23*J3 )
+        #x3_new[t_i+1] =  x3_new[t_i] + dt/(c3p-c3m)*(D_23*J4 )
+
+        x1_new[t_i+1] =  x1_new[t_i] + dt/(c1p-c1m)*(-D_12*(c2m-c1p))/(x2_new[t_i]-x1_new[t_i])
+        x2_new[t_i+1] =  x2_new[t_i] + dt/(c2p-c2m)*(D_12*(c2m-c1p)/(x2_new[t_i]-x1_new[t_i]) - D_23*(c3m-c2p)/(x3_new[t_i]-x2_new[t_i]) )
+        x3_new[t_i+1] =  x3_new[t_i] + dt/(c3p-c3m)*( D_23*(c3m-c2p)/(x3_new[t_i]-x2_new[t_i]) )
 
         #check
         if (x1_new[t_i+1] - x0)<0:
@@ -240,12 +279,10 @@ def Solver(dt_, T_, mesh_m_, p_):
         x2 = x2_new[t_i+1]
         x3 = x3_new[t_i+1]
         x4 = sx4
-        mesh_total[t_i+1,:], ur_total[t_i+1,:], sg = Solve_Mec([x0,x1,x2,x3,x4], mesh_m_, 0.0,p0 )    
+        #mesh_total[t_i+1,:], ur_total[t_i+1,:], sg = Solver_Mec([x0,x1,x2,x3,x4], mesh_number, lamb, mu, eig, 0.0, p_, iter)    
         
         #update diffusion coffs
-        Q12= 53.92e3 - k_coup*sg_[4][N1_mech+1]
-        D_12 = 1.84e-9*exp(-(Q12)/(R_gas*(273+T)))
-        Q23= 61.86e3 - k_coup*sg_[4][N1_mech + N2_mech+1]
-        D_23 = 5.48e-9*exp(-(Q23)/(R_gas*(273+T))) 
-    
+        D_12 = D12_update(sg[3][N1_mech: N1_mech+N2_mech].mean(), k_coup)
+        D_23 = D23_update(sg[3][N1_mech+N2_mech: N1_mech+N2_mech+N3_mech].mean(), k_coup)
+
     return mesh_total, ur_total, x1_new, x2_new, x3_new, sg

@@ -3,5 +3,5 @@ definition of global constants
 Temperature
 Gas constant
 '''
-Temperature = 210 #Kelvins
+Temperature = 215 #Celcius
 R_gas = 8.317462 #
